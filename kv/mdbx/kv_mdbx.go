@@ -328,8 +328,9 @@ type MdbxKV struct {
 	buckets      kv.TableCfg
 	opts         MdbxOpts
 	txSize       uint64
-	roTxsLimiter chan struct{} // does limit amount of concurrent Ro transactions - in most casess runtime.NumCPU() is good value for this channel capacity - this channel can be shared with other components (like Decompressor)
+	roTxsLimiter chan struct{} // does limit amount of concurrent Ro transactions - in most cases runtime.NumCPU() is good value for this channel capacity - this channel can be shared with other components (like Decompressor)
 	closed       atomic.Bool
+	memBarrier   atomic.Bool
 }
 
 func (db *MdbxKV) PageSize() uint64 { return db.opts.pageSize }
@@ -404,6 +405,8 @@ func (db *MdbxKV) BeginRo(ctx context.Context) (txn kv.Tx, err error) {
 		}
 	}()
 
+	_ = db.memBarrier.Load()
+
 	tx, err := db.env.BeginTxn(nil, mdbx.Readonly)
 	if err != nil {
 		return nil, fmt.Errorf("%w, label: %s, trace: %s", err, db.opts.label.String(), stack2.Trace().String())
@@ -426,6 +429,8 @@ func (db *MdbxKV) BeginRw(_ context.Context) (txn kv.RwTx, err error) {
 			db.wg.Add(1)
 		}
 	}()
+
+	_ = db.memBarrier.Load()
 
 	tx, err := db.env.BeginTxn(nil, 0)
 	if err != nil {
@@ -799,6 +804,8 @@ func (tx *MdbxTx) Commit() error {
 		kv.DbCommitEnding.Update(latency.Ending.Seconds())
 		kv.DbCommitTotal.Update(latency.Whole.Seconds())
 	}
+
+	tx.db.memBarrier.Store(true)
 
 	//if latency.Whole > slowTx {
 	//	log.Info("Commit",
