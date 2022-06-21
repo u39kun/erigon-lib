@@ -27,6 +27,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	atomic2 "sync/atomic"
 	"time"
 
 	"github.com/c2h5oh/datasize"
@@ -330,7 +331,7 @@ type MdbxKV struct {
 	txSize       uint64
 	roTxsLimiter chan struct{} // does limit amount of concurrent Ro transactions - in most cases runtime.NumCPU() is good value for this channel capacity - this channel can be shared with other components (like Decompressor)
 	closed       atomic.Bool
-	memBarrier   atomic.Bool
+	memBarrier   uint32
 }
 
 func (db *MdbxKV) PageSize() uint64 { return db.opts.pageSize }
@@ -405,7 +406,7 @@ func (db *MdbxKV) BeginRo(ctx context.Context) (txn kv.Tx, err error) {
 		}
 	}()
 
-	_ = db.memBarrier.Load()
+	log.Info("BeginRo", "memBarrier", atomic2.LoadUint32(&db.memBarrier))
 
 	tx, err := db.env.BeginTxn(nil, mdbx.Readonly)
 	if err != nil {
@@ -430,7 +431,7 @@ func (db *MdbxKV) BeginRw(_ context.Context) (txn kv.RwTx, err error) {
 		}
 	}()
 
-	_ = db.memBarrier.Load()
+	log.Info("BeginRw", "memBarrier", atomic2.LoadUint32(&db.memBarrier))
 
 	tx, err := db.env.BeginTxn(nil, 0)
 	if err != nil {
@@ -805,7 +806,8 @@ func (tx *MdbxTx) Commit() error {
 		kv.DbCommitTotal.Update(latency.Whole.Seconds())
 	}
 
-	tx.db.memBarrier.Store(true)
+	newVal := atomic2.AddUint32(&tx.db.memBarrier, 1)
+	log.Info("Commit", "memBarrier", newVal)
 
 	//if latency.Whole > slowTx {
 	//	log.Info("Commit",
