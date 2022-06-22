@@ -611,6 +611,8 @@ func (p *TxPool) Best(n uint16, txs *types.TxsRlp, tx kv.Tx) error {
 	txs.Resize(uint(cmp.Min(int(n), len(p.pending.best.ms))))
 
 	best := p.pending.best
+	log.Info("Best", "len(best.ms)", len(best.ms))
+
 	j := 0
 	for i := 0; j < int(n) && i < len(best.ms); i++ {
 		mt := best.ms[i]
@@ -2079,12 +2081,13 @@ func (p *PendingPool) Remove(i *metaTx) {
 }
 
 func (p *PendingPool) Add(i *metaTx) {
+	log.Info("PendingPool Add")
 	if p.adding {
 		p.added = append(p.added, i.Tx.IDHash[:]...)
 	}
-	if i.Tx.Traced {
-		log.Info(fmt.Sprintf("TX TRACING: moved to subpool %s, IdHash=%x, sender=%d", p.t, i.Tx.IDHash, i.Tx.SenderID))
-	}
+	//if i.Tx.Traced {
+	log.Info(fmt.Sprintf("TX TRACING: moved to subpool %s, IdHash=%x, sender=%d", p.t, i.Tx.IDHash, i.Tx.SenderID))
+	//	}
 	i.currentSubPool = p.t
 	heap.Push(p.worst, i)
 	p.best.UnsafeAdd(i)
@@ -2149,12 +2152,13 @@ func (p *SubPool) PopWorst() *metaTx { //nolint
 }
 func (p *SubPool) Len() int { return p.best.Len() }
 func (p *SubPool) Add(i *metaTx) {
+	log.Info("SubPool Add")
 	if p.adding {
 		p.added = append(p.added, i.Tx.IDHash[:]...)
 	}
-	if i.Tx.Traced {
-		log.Info(fmt.Sprintf("TX TRACING: moved to subpool %s, IdHash=%x, sender=%d", p.t, i.Tx.IDHash, i.Tx.SenderID))
-	}
+	//if i.Tx.Traced {
+	log.Info(fmt.Sprintf("TX TRACING: moved to subpool %s, IdHash=%x, sender=%d", p.t, i.Tx.IDHash, i.Tx.SenderID))
+	//}
 	i.currentSubPool = p.t
 	heap.Push(p.best, i)
 	heap.Push(p.worst, i)
