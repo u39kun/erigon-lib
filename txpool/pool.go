@@ -1261,6 +1261,7 @@ func onSenderStateChange(senderID uint64, senderNonce uint64, senderBalance uint
 // promote reasserts invariants of the subpool and returns the list of transactions that ended up
 // being promoted to the pending or basefee pool, for re-broadcasting
 func promote(pending *PendingPool, baseFee, queued *SubPool, pendingBaseFee uint64, discard func(*metaTx, DiscardReason)) {
+	log.Info("promote 000")
 	// Demote worst transactions that do not qualify for pending sub pool anymore, to other sub pools, or discard
 	for worst := pending.Worst(); pending.Len() > 0 && (worst.subPool < BaseFeePoolBits || worst.minFeeCap < pendingBaseFee); worst = pending.Worst() {
 		if worst.subPool >= BaseFeePoolBits {
@@ -1286,11 +1287,19 @@ func promote(pending *PendingPool, baseFee, queued *SubPool, pendingBaseFee uint
 		}
 	}
 
+	log.Info("promote 100", "queued.Len()", queued.Len())
 	// Promote best transactions from the queued pool to either pending or base fee pool, while they qualify
-	for best := queued.Best(); queued.Len() > 0 && best.subPool >= BaseFeePoolBits; best = queued.Best() {
+	for best := queued.Best(); queued.Len() > 0; best = queued.Best() {
+		log.Info("promote 200", "best", best)
+		if best.subPool < BaseFeePoolBits {
+			continue
+		}
+		log.Info("promote 300")
 		if best.minFeeCap >= pendingBaseFee {
+			log.Info("promote 400")
 			pending.Add(queued.PopBest())
 		} else {
+			log.Info("promote 500")
 			baseFee.Add(queued.PopBest())
 		}
 	}
