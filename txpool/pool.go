@@ -1292,7 +1292,7 @@ func promote(pending *PendingPool, baseFee, queued *SubPool, pendingBaseFee uint
 	for best := queued.Best(); queued.Len() > 0; best = queued.Best() {
 		log.Info("promote 200", "best", best)
 		if best.subPool < BaseFeePoolBits {
-			continue
+			break
 		}
 		log.Info("promote 300")
 		if best.minFeeCap >= pendingBaseFee {
