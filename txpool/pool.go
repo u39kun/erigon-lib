@@ -611,7 +611,7 @@ func (p *TxPool) Best(n uint16, txs *types.TxsRlp, tx kv.Tx) error {
 	txs.Resize(uint(cmp.Min(int(n), len(p.pending.best.ms))))
 
 	best := p.pending.best
-	log.Info("Best", "len(best.ms)", len(best.ms))
+	log.Info("TXX Best", "len(best.ms)", len(best.ms))
 
 	j := 0
 	for i := 0; j < int(n) && i < len(best.ms); i++ {
@@ -795,7 +795,7 @@ func fillDiscardReasons(reasons []DiscardReason, newTxs types.TxSlots, discardRe
 }
 
 func (p *TxPool) AddLocalTxs(ctx context.Context, newTransactions types.TxSlots, tx kv.Tx) ([]DiscardReason, error) {
-	log.Info("AddLocalTxs")
+	log.Info("TXX AddLocalTxs")
 	coreTx, err := p.coreDB().BeginRo(ctx)
 	if err != nil {
 		return nil, err
@@ -878,7 +878,7 @@ func addTxs(blockNum uint64, cacheView kvcache.CacheView, senders *sendersBatch,
 	newTxs types.TxSlots, pendingBaseFee, blockGasLimit uint64,
 	pending *PendingPool, baseFee, queued *SubPool,
 	byNonce *BySenderAndNonce, byHash map[string]*metaTx, add func(*metaTx) DiscardReason, discard func(*metaTx, DiscardReason)) ([]DiscardReason, error) {
-	log.Info("addTxs")
+	log.Info("TXX addTxs")
 	protocolBaseFee := calcProtocolBaseFee(pendingBaseFee)
 	if ASSERT {
 		for _, txn := range newTxs.Txs {
@@ -923,9 +923,9 @@ func addTxs(blockNum uint64, cacheView kvcache.CacheView, senders *sendersBatch,
 			continue
 		}
 		discardReasons[i] = NotSet
-		if txn.Traced {
-			log.Info(fmt.Sprintf("TX TRACING: schedule sendersWithChangedState idHash=%x senderId=%d", txn.IDHash, mt.Tx.SenderID))
-		}
+		//if txn.Traced {
+		log.Info(fmt.Sprintf("TX TRACING: schedule sendersWithChangedState idHash=%x senderId=%d", txn.IDHash, mt.Tx.SenderID))
+		//}
 		sendersWithChangedState[mt.Tx.SenderID] = struct{}{}
 	}
 
@@ -1018,7 +1018,7 @@ func (p *TxPool) setBaseFee(baseFee uint64) (uint64, bool) {
 func (p *TxPool) addLocked(mt *metaTx) DiscardReason {
 	// Insert to pending pool, if pool doesn't have txn with same Nonce and bigger Tip
 	found := p.all.get(mt.Tx.SenderID, mt.Tx.Nonce)
-	log.Info("addLocked", "found", found)
+	log.Info("TXX addLocked", "found", found)
 	if found != nil {
 		tipThreshold := uint256.NewInt(0)
 		tipThreshold = tipThreshold.Mul(&found.Tx.Tip, uint256.NewInt(100+p.cfg.PriceBump))
@@ -1261,7 +1261,7 @@ func onSenderStateChange(senderID uint64, senderNonce uint64, senderBalance uint
 // promote reasserts invariants of the subpool and returns the list of transactions that ended up
 // being promoted to the pending or basefee pool, for re-broadcasting
 func promote(pending *PendingPool, baseFee, queued *SubPool, pendingBaseFee uint64, discard func(*metaTx, DiscardReason)) {
-	log.Info("promote 000")
+	log.Info("TXX promote 000")
 	// Demote worst transactions that do not qualify for pending sub pool anymore, to other sub pools, or discard
 	for worst := pending.Worst(); pending.Len() > 0 && (worst.subPool < BaseFeePoolBits || worst.minFeeCap < pendingBaseFee); worst = pending.Worst() {
 		if worst.subPool >= BaseFeePoolBits {
@@ -1287,19 +1287,21 @@ func promote(pending *PendingPool, baseFee, queued *SubPool, pendingBaseFee uint
 		}
 	}
 
-	log.Info("promote 100", "queued.Len()", queued.Len())
+	log.Info("TXX promote 100", "queued.Len()", queued.Len())
+	queued.PrintBest()
+
 	// Promote best transactions from the queued pool to either pending or base fee pool, while they qualify
 	for best := queued.Best(); queued.Len() > 0; best = queued.Best() {
-		log.Info("promote 200", "best", best)
+		log.Info("TXX promote 200", "best", best)
 		if best.subPool < BaseFeePoolBits {
 			break
 		}
-		log.Info("promote 300")
+		log.Info("TXX promote 300")
 		if best.minFeeCap >= pendingBaseFee {
-			log.Info("promote 400")
+			log.Info("TXX promote 400")
 			pending.Add(queued.PopBest())
 		} else {
-			log.Info("promote 500")
+			log.Info("TXX promote 500")
 			baseFee.Add(queued.PopBest())
 		}
 	}
@@ -2093,7 +2095,7 @@ func (p *PendingPool) Remove(i *metaTx) {
 }
 
 func (p *PendingPool) Add(i *metaTx) {
-	log.Info("PendingPool Add")
+	log.Info("TXX PendingPool Add")
 	if p.adding {
 		p.added = append(p.added, i.Tx.IDHash[:]...)
 	}
@@ -2146,6 +2148,11 @@ func (p *SubPool) Best() *metaTx { //nolint
 	}
 	return p.best.ms[0]
 }
+func (p *SubPool) PrintBest() {
+	for i := 0; i < len(p.best.ms); i++ {
+		log.Info("TXX PrintBest", "i", i, "tx", p.best.ms[i])
+	}
+}
 func (p *SubPool) Worst() *metaTx { //nolint
 	if len(p.worst.ms) == 0 {
 		return nil
@@ -2164,7 +2171,7 @@ func (p *SubPool) PopWorst() *metaTx { //nolint
 }
 func (p *SubPool) Len() int { return p.best.Len() }
 func (p *SubPool) Add(i *metaTx) {
-	log.Info("SubPool Add")
+	log.Info("TXX SubPool Add")
 	if p.adding {
 		p.added = append(p.added, i.Tx.IDHash[:]...)
 	}
