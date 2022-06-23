@@ -795,6 +795,7 @@ func fillDiscardReasons(reasons []DiscardReason, newTxs types.TxSlots, discardRe
 }
 
 func (p *TxPool) AddLocalTxs(ctx context.Context, newTransactions types.TxSlots, tx kv.Tx) ([]DiscardReason, error) {
+	log.Info("AddLocalTxs")
 	coreTx, err := p.coreDB().BeginRo(ctx)
 	if err != nil {
 		return nil, err
@@ -846,9 +847,9 @@ func (p *TxPool) AddLocalTxs(ctx context.Context, newTransactions types.TxSlots,
 	for i, reason := range reasons {
 		if reason == Success {
 			txn := newTxs.Txs[i]
-			if txn.Traced {
-				log.Info(fmt.Sprintf("TX TRACING: AddLocalTxs promotes idHash=%x, senderId=%d", txn.IDHash, txn.SenderID))
-			}
+			//	if txn.Traced {
+			log.Info(fmt.Sprintf("TX TRACING: AddLocalTxs promotes idHash=%x, senderId=%d", txn.IDHash, txn.SenderID))
+			//	}
 			p.promoted = append(p.promoted, txn.IDHash[:]...)
 		}
 	}
@@ -877,6 +878,7 @@ func addTxs(blockNum uint64, cacheView kvcache.CacheView, senders *sendersBatch,
 	newTxs types.TxSlots, pendingBaseFee, blockGasLimit uint64,
 	pending *PendingPool, baseFee, queued *SubPool,
 	byNonce *BySenderAndNonce, byHash map[string]*metaTx, add func(*metaTx) DiscardReason, discard func(*metaTx, DiscardReason)) ([]DiscardReason, error) {
+	log.Info("addTxs")
 	protocolBaseFee := calcProtocolBaseFee(pendingBaseFee)
 	if ASSERT {
 		for _, txn := range newTxs.Txs {
@@ -1016,6 +1018,7 @@ func (p *TxPool) setBaseFee(baseFee uint64) (uint64, bool) {
 func (p *TxPool) addLocked(mt *metaTx) DiscardReason {
 	// Insert to pending pool, if pool doesn't have txn with same Nonce and bigger Tip
 	found := p.all.get(mt.Tx.SenderID, mt.Tx.Nonce)
+	log.Info("addLocked", "found", found)
 	if found != nil {
 		tipThreshold := uint256.NewInt(0)
 		tipThreshold = tipThreshold.Mul(&found.Tx.Tip, uint256.NewInt(100+p.cfg.PriceBump))
@@ -1023,7 +1026,7 @@ func (p *TxPool) addLocked(mt *metaTx) DiscardReason {
 		feecapThreshold := found.Tx.FeeCap * (100 + p.cfg.PriceBump) / 100
 		if mt.Tx.Tip.Cmp(tipThreshold) < 0 || mt.Tx.FeeCap < feecapThreshold {
 			// Both tip and feecap need to be larger than previously to replace the transaction
-			// In case if the transation is stuck, "poke" it to rebroadcast
+			// In case if the transaction is stuck, "poke" it to rebroadcast
 			// TODO refactor to return the list of promoted hashes instead of using added inside the pool
 			if mt.subPool&IsLocal != 0 {
 				switch found.currentSubPool {
