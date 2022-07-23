@@ -31,10 +31,12 @@ import (
 
 	"github.com/c2h5oh/datasize"
 	stack2 "github.com/go-stack/stack"
-	"github.com/ledgerwatch/erigon-lib/kv"
 	"github.com/ledgerwatch/log/v3"
 	"github.com/torquem-ch/mdbx-go/mdbx"
 	"go.uber.org/atomic"
+	"golang.org/x/sync/semaphore"
+
+	"github.com/ledgerwatch/erigon-lib/kv"
 )
 
 const NonExistingDBI kv.DBI = 999_999_999
@@ -57,7 +59,7 @@ type MdbxOpts struct {
 	syncPeriod    time.Duration
 	augumentLimit uint64
 	pageSize      uint64
-	roTxsLimiter  chan struct{}
+	roTxsLimiter  *semaphore.Weighted
 }
 
 func testKVPath() string {
@@ -73,7 +75,7 @@ func NewMDBX(log log.Logger) MdbxOpts {
 		bucketsCfg: WithChaindataTables,
 		flags:      mdbx.NoReadahead | mdbx.Coalesce | mdbx.Durable,
 		log:        log,
-		pageSize:   4096,
+		pageSize:   kv.DefaultPageSize(),
 	}
 }
 
@@ -86,7 +88,7 @@ func (opts MdbxOpts) Label(label kv.Label) MdbxOpts {
 	return opts
 }
 
-func (opts MdbxOpts) RoTxsLimiter(l chan struct{}) MdbxOpts {
+func (opts MdbxOpts) RoTxsLimiter(l *semaphore.Weighted) MdbxOpts {
 	opts.roTxsLimiter = l
 	return opts
 }
@@ -206,11 +208,24 @@ func (opts MdbxOpts) Open() (kv.RwDB, error) {
 		}
 	}
 
-	defaultDirtyPagesLimit, err := env.GetOption(mdbx.OptTxnDpLimit)
+	err = env.Open(opts.path, opts.flags, 0664)
 	if err != nil {
-		return nil, err
+		if err != nil {
+			return nil, fmt.Errorf("%w, label: %s, trace: %s", err, opts.label.String(), stack2.Trace().String())
+		}
 	}
 
+	// mdbx will not change pageSize if db already exists. means need read real value after env.open()
+	in, err := env.Info(nil)
+	if err != nil {
+		if err != nil {
+			return nil, fmt.Errorf("%w, label: %s, trace: %s", err, opts.label.String(), stack2.Trace().String())
+		}
+	}
+	opts.pageSize = uint64(in.PageSize)
+
+	// erigon using big transactions
+	// increase "page measured" options. need do it after env.Open() because default are depend on pageSize known only after env.Open()
 	if opts.flags&mdbx.Accede == 0 && opts.flags&mdbx.Readonly == 0 {
 		// 1/8 is good for transactions with a lot of modifications - to reduce invalidation size.
 		// But Erigon app now using Batch and etl.Collectors to avoid writing to DB frequently changing data.
@@ -218,10 +233,24 @@ func (opts MdbxOpts) Open() (kv.RwDB, error) {
 		//if err = env.SetOption(mdbx.OptSpillMinDenominator, 8); err != nil {
 		//	return nil, err
 		//}
-		if err = env.SetOption(mdbx.OptTxnDpInitial, 16*1024); err != nil {
+
+		txnDpInitial, err := env.GetOption(mdbx.OptTxnDpInitial)
+		if err != nil {
 			return nil, err
 		}
-		if err = env.SetOption(mdbx.OptDpReverseLimit, 16*1024); err != nil {
+		if err = env.SetOption(mdbx.OptTxnDpInitial, txnDpInitial*2); err != nil {
+			return nil, err
+		}
+		dpReserveLimit, err := env.GetOption(mdbx.OptDpReverseLimit)
+		if err != nil {
+			return nil, err
+		}
+		if err = env.SetOption(mdbx.OptDpReverseLimit, dpReserveLimit*2); err != nil {
+			return nil, err
+		}
+
+		defaultDirtyPagesLimit, err := env.GetOption(mdbx.OptTxnDpLimit)
+		if err != nil {
 			return nil, err
 		}
 		if err = env.SetOption(mdbx.OptTxnDpLimit, defaultDirtyPagesLimit*2); err != nil { // default is RAM/42
@@ -239,13 +268,6 @@ func (opts MdbxOpts) Open() (kv.RwDB, error) {
 		return nil, err
 	}
 
-	err = env.Open(opts.path, opts.flags, 0664)
-	if err != nil {
-		if err != nil {
-			return nil, fmt.Errorf("%w, label: %s, trace: %s", err, opts.label.String(), stack2.Trace().String())
-		}
-	}
-
 	if opts.syncPeriod != 0 {
 		if err = env.SetSyncPeriod(opts.syncPeriod); err != nil {
 			env.Close()
@@ -254,7 +276,7 @@ func (opts MdbxOpts) Open() (kv.RwDB, error) {
 	}
 
 	if opts.roTxsLimiter == nil {
-		opts.roTxsLimiter = make(chan struct{}, runtime.GOMAXPROCS(-1))
+		opts.roTxsLimiter = semaphore.NewWeighted(int64(runtime.GOMAXPROCS(-1)))
 	}
 	db := &MdbxKV{
 		opts:         opts,
@@ -328,7 +350,7 @@ type MdbxKV struct {
 	buckets      kv.TableCfg
 	opts         MdbxOpts
 	txSize       uint64
-	roTxsLimiter chan struct{} // does limit amount of concurrent Ro transactions - in most casess runtime.NumCPU() is good value for this channel capacity - this channel can be shared with other components (like Decompressor)
+	roTxsLimiter *semaphore.Weighted // does limit amount of concurrent Ro transactions - in most casess runtime.NumCPU() is good value for this channel capacity - this channel can be shared with other components (like Decompressor)
 	closed       atomic.Bool
 }
 
@@ -392,10 +414,16 @@ func (db *MdbxKV) BeginRo(ctx context.Context) (txn kv.Tx, err error) {
 	if db.closed.Load() {
 		return nil, fmt.Errorf("db closed")
 	}
-	select {
-	case <-ctx.Done():
+
+	// will return nil err if context is cancelled (may appear to acquire the semaphore)
+	if semErr := db.roTxsLimiter.Acquire(ctx, 1); semErr != nil {
+		return nil, semErr
+	}
+
+	// if context cancelled as we acquire the sempahore, it may succeed without blocking
+	// in this case we should return
+	if ctx.Err() != nil {
 		return nil, ctx.Err()
-	case db.roTxsLimiter <- struct{}{}:
 	}
 
 	defer func() {
@@ -405,7 +433,7 @@ func (db *MdbxKV) BeginRo(ctx context.Context) (txn kv.Tx, err error) {
 		if txn == nil {
 			// on error, or if there is whatever reason that we don't return a tx,
 			// we need to free up the limiter slot, otherwise it could lead to deadlocks
-			<-db.roTxsLimiter
+			db.roTxsLimiter.Release(1)
 		}
 	}()
 
@@ -770,10 +798,7 @@ func (tx *MdbxTx) Commit() error {
 		tx.tx = nil
 		tx.db.wg.Done()
 		if tx.readOnly {
-			select {
-			case <-tx.db.roTxsLimiter:
-			default:
-			}
+			tx.db.roTxsLimiter.Release(1)
 		} else {
 			runtime.UnlockOSThread()
 		}
@@ -828,10 +853,7 @@ func (tx *MdbxTx) Rollback() {
 		tx.tx = nil
 		tx.db.wg.Done()
 		if tx.readOnly {
-			select {
-			case <-tx.db.roTxsLimiter:
-			default:
-			}
+			tx.db.roTxsLimiter.Release(1)
 		} else {
 			runtime.UnlockOSThread()
 		}

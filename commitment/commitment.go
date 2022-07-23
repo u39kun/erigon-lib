@@ -35,16 +35,16 @@ type Trie interface {
 type TrieVariant string
 
 const (
-	// HexPatriciaHashed used as default commitment approach
+	// VariantHexPatriciaTrie used as default commitment approach
 	VariantHexPatriciaTrie TrieVariant = "hex-patricia-hashed"
-	// Experimental mode with binary key representation
+	// VariantBinPatriciaTrie - Experimental mode with binary key representation
 	VariantBinPatriciaTrie TrieVariant = "bin-patricia-hashed"
 )
 
 func InitializeTrie(tv TrieVariant) Trie {
 	switch tv {
-	// case VariantBinPatriciaTrie:
-	// 	return NewBinPatriciaHashed(length.Addr, nil, nil, nil)
+	case VariantBinPatriciaTrie:
+		return NewBinPatriciaHashed(length.Addr, nil, nil, nil)
 	case VariantHexPatriciaTrie:
 		fallthrough
 	default:
@@ -55,10 +55,10 @@ func InitializeTrie(tv TrieVariant) Trie {
 type PartFlags uint8
 
 const (
-	HASHEDKEY_PART     PartFlags = 1
-	ACCOUNT_PLAIN_PART PartFlags = 2
-	STORAGE_PLAIN_PART PartFlags = 4
-	HASH_PART          PartFlags = 8
+	HashedKeyPart    PartFlags = 1
+	AccountPlainPart PartFlags = 2
+	StoragePlainPart PartFlags = 4
+	HashPart         PartFlags = 8
 )
 
 type BranchData []byte
@@ -109,7 +109,6 @@ func (branchData BranchData) String() string {
 }
 
 func EncodeBranch(bitmap, touchMap, afterMap uint16, retriveCell func(nibble int, skip bool) (*Cell, error)) (branchData BranchData, lastNibble int, err error) {
-	// bitmapBuf := make([]byte, 4)
 	branchData = make(BranchData, 0, 32)
 	var bitmapBuf [binary.MaxVarintLen64]byte
 
@@ -136,16 +135,16 @@ func EncodeBranch(bitmap, touchMap, afterMap uint16, retriveCell func(nibble int
 		if bitmap&bit != 0 {
 			var fieldBits PartFlags
 			if cell.extLen > 0 && cell.spl == 0 {
-				fieldBits |= HASHEDKEY_PART
+				fieldBits |= HashedKeyPart
 			}
 			if cell.apl > 0 {
-				fieldBits |= ACCOUNT_PLAIN_PART
+				fieldBits |= AccountPlainPart
 			}
 			if cell.spl > 0 {
-				fieldBits |= STORAGE_PLAIN_PART
+				fieldBits |= StoragePlainPart
 			}
 			if cell.hl > 0 {
-				fieldBits |= HASH_PART
+				fieldBits |= HashPart
 			}
 			branchData = append(branchData, byte(fieldBits))
 			if cell.extLen > 0 && cell.spl == 0 {
@@ -184,7 +183,7 @@ func (branchData BranchData) ExtractPlainKeys() (accountPlainKeys [][]byte, stor
 		bit := bitset & -bitset
 		fieldBits := PartFlags(branchData[pos])
 		pos++
-		if fieldBits&HASHEDKEY_PART != 0 {
+		if fieldBits&HashedKeyPart != 0 {
 			l, n := binary.Uvarint(branchData[pos:])
 			if n == 0 {
 				return nil, nil, fmt.Errorf("extractPlainKeys buffer too small for hashedKey len")
@@ -199,7 +198,7 @@ func (branchData BranchData) ExtractPlainKeys() (accountPlainKeys [][]byte, stor
 				pos += int(l)
 			}
 		}
-		if fieldBits&ACCOUNT_PLAIN_PART != 0 {
+		if fieldBits&AccountPlainPart != 0 {
 			l, n := binary.Uvarint(branchData[pos:])
 			if n == 0 {
 				return nil, nil, fmt.Errorf("extractPlainKeys buffer too small for accountPlainKey len")
@@ -215,7 +214,7 @@ func (branchData BranchData) ExtractPlainKeys() (accountPlainKeys [][]byte, stor
 				pos += int(l)
 			}
 		}
-		if fieldBits&STORAGE_PLAIN_PART != 0 {
+		if fieldBits&StoragePlainPart != 0 {
 			l, n := binary.Uvarint(branchData[pos:])
 			if n == 0 {
 				return nil, nil, fmt.Errorf("extractPlainKeys buffer too small for storagePlainKey len")
@@ -231,7 +230,7 @@ func (branchData BranchData) ExtractPlainKeys() (accountPlainKeys [][]byte, stor
 				pos += int(l)
 			}
 		}
-		if fieldBits&HASH_PART != 0 {
+		if fieldBits&HashPart != 0 {
 			l, n := binary.Uvarint(branchData[pos:])
 			if n == 0 {
 				return nil, nil, fmt.Errorf("extractPlainKeys buffer too small for hash len")
@@ -263,7 +262,7 @@ func (branchData BranchData) ReplacePlainKeys(accountPlainKeys [][]byte, storage
 		fieldBits := PartFlags(branchData[pos])
 		newData = append(newData, byte(fieldBits))
 		pos++
-		if fieldBits&HASHEDKEY_PART != 0 {
+		if fieldBits&HashedKeyPart != 0 {
 			l, n := binary.Uvarint(branchData[pos:])
 			if n == 0 {
 				return nil, fmt.Errorf("replacePlainKeys buffer too small for hashedKey len")
@@ -280,7 +279,7 @@ func (branchData BranchData) ReplacePlainKeys(accountPlainKeys [][]byte, storage
 				pos += int(l)
 			}
 		}
-		if fieldBits&ACCOUNT_PLAIN_PART != 0 {
+		if fieldBits&AccountPlainPart != 0 {
 			l, n := binary.Uvarint(branchData[pos:])
 			if n == 0 {
 				return nil, fmt.Errorf("replacePlainKeys buffer too small for accountPlainKey len")
@@ -299,7 +298,7 @@ func (branchData BranchData) ReplacePlainKeys(accountPlainKeys [][]byte, storage
 			newData = append(newData, accountPlainKeys[accountI]...)
 			accountI++
 		}
-		if fieldBits&STORAGE_PLAIN_PART != 0 {
+		if fieldBits&StoragePlainPart != 0 {
 			l, n := binary.Uvarint(branchData[pos:])
 			if n == 0 {
 				return nil, fmt.Errorf("replacePlainKeys buffer too small for storagePlainKey len")
@@ -318,7 +317,7 @@ func (branchData BranchData) ReplacePlainKeys(accountPlainKeys [][]byte, storage
 			newData = append(newData, storagePlainKeys[storageI]...)
 			storageI++
 		}
-		if fieldBits&HASH_PART != 0 {
+		if fieldBits&HashPart != 0 {
 			l, n := binary.Uvarint(branchData[pos:])
 			if n == 0 {
 				return nil, fmt.Errorf("replacePlainKeys buffer too small for hash len")
